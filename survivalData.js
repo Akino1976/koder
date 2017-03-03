@@ -1,4 +1,4 @@
-define(['jquery', 'underscore', 'handlebars', 'd3', 'nvd3'], function($, _ ,Handlebars, d3, nv) {
+define(['jquery', 'underscore', 'd3', 'nvd3', 'jstat'], function($, _ , d3, nv, jStat) {
 
 		var Survival = function(elem, options) {
 						this.elem = elem;
@@ -15,6 +15,7 @@ define(['jquery', 'underscore', 'handlebars', 'd3', 'nvd3'], function($, _ ,Hand
 			url :  '/api/collection/survival',
 			opts : {_choose: null, _type : 'normal' , _what: null} ,
 			num	:0,
+			scoreArray: ["0","MktLåg" , "Låg", "Medel", "Hög", "MycketHög"],
 			Limit: 10
 
 		},
@@ -29,19 +30,78 @@ define(['jquery', 'underscore', 'handlebars', 'd3', 'nvd3'], function($, _ ,Hand
 			this.childTable		= $('#money');
 			this.moneyOutput = [] ;
 			this.timeframe	= [];
+			this.chart ;
+			this.chartData;
 			// Run loading
 			this.run();
 			
 			return this;
 		},
 		
+		
+		
+		
+		getClosest : function( ) {
+				var	self		= this,
+					array		= arguments[0] !== undefined ?  arguments[0] : null,
+					 target		= arguments[1] !== undefined ?  arguments[1] : null,
+					 point		= _.findWhere(array, {"x" : target});
+				/*x has to be visiable inside map*/
+				function extract() {
+					var arg	= arguments[0] !== undefined ? arguments[0]: null;
+					var tuples = _.map(arg, function(val) {
+									return [val, Math.abs(val.x - target)];
+								});
+						return target =  _.reduce(tuples, function(memo, val) {
+									return (memo[1] < val[1]) ? memo : val;
+								}, [-1, 999])[0];		
+				};
+				
+						
+					var outPut_1	= {};
+					switch (true) {
+						case (point !== undefined):
+							return point;
+							break;
+						case (point === undefined && array[0].values !== undefined):
+							/*rund credit data */
+							self.config.scoreArray.forEach(function(d,id){
+							var point	= array[id] !== undefined ?
+										_.findWhere(array[id].values, {"x" : Number(target)}) : null ;
+								switch (true) {
+									case (point === null):
+									return true;
+									break;
+									case (point === undefined):
+									outPut_1[d]  	= extract(array[id].values);
+									break;
+									default:
+										outPut_1[d]	=  point;
+										return true;
+									break;
+								}
+							
+							
+							}); // end of foreach
+							
+						break;	
+						case (point === undefined && array[0].values === undefined):
+								outPut_1 = 	extract(array);
+						break;
+					} // end of switch
+					
+					
+				return outPut_1;
+					
+		},
 		/*@argument Get data with considering time and the selection of against time
 		 *@USAGE self.fetchData(<data>, <variable>)
 		 */
 		fetchData :	function (){
 			var data		= arguments[0] !== undefined ?  arguments[0] : null,
-				yName		= arguments[1] !== undefined ?  arguments[1] : 'surv';
+				yName		= arguments[1] !== undefined ?  arguments[1] : 'surv',
 				xName		= arguments[2] !== undefined ?  arguments[2] : 'time';
+				
 			var result = [];
 			_.each( data, function(itm) {
 				var time		= parseInt( itm[xName]) ;
@@ -66,8 +126,7 @@ define(['jquery', 'underscore', 'handlebars', 'd3', 'nvd3'], function($, _ ,Hand
 				id		= self.elem.get(0).id,
 				_chart  = $("#" + id);
 			
-				var self = this;
-        
+		
 				if(_chart.children().length > 1)
 				{
 						//Animate remove
@@ -82,7 +141,7 @@ define(['jquery', 'underscore', 'handlebars', 'd3', 'nvd3'], function($, _ ,Hand
 			
 			
 			nv.addGraph(function() {
-			var chart = nv.models.lineChart()
+				chart = nv.models.lineChart()
 				.options({
 				    duration: 300,
 				    useInteractiveGuideline: true
@@ -95,16 +154,40 @@ define(['jquery', 'underscore', 'handlebars', 'd3', 'nvd3'], function($, _ ,Hand
 				
       
 			chart.lines.dispatch.on('elementClick', function(e) {
-					var idx 	= e[0].pointIndex,
-						points	= _.findWhere(self.moneyOutput, {x : idx});
-						
+				/*x = time, y = Money In, update table */
+					var idx 		= _.size(e) > 1 ? j$.max(_.pluck(e, 'pointIndex')) : e[0].pointIndex,
+						points		= self.getClosest(self.moneyOutput,  idx),
+						updatevVars	= ['Day','Money In', 'Ratio paid (%)'],
+						colNames	= _.pluck(self.childTable.find("thead th"), 'innerHTML'),
+						idObject	= {};	
+				
+				updatevVars.forEach(function(d1, id1){		
+					if (_.indexOf(colNames, d1) !== -1 ) {
+						idObject[d1] = _.indexOf(colNames, d1);
+					}
+				});
+				var thCount	 	= _.size(_.keys(points) ) > 2 ? _.size(_.keys(points) ) : 1;
+					tdCount		= _.size(idObject),
+					placement	= _.values(idObject),
+					LastID		= _.last(placement) ,
+					Values		= _.values(points),
+					Range		= _.range(thCount);
+				
+				Range.forEach(function(n){
+					var th1 		= self.childTable.children("tbody").children(`tr:nth(${n})`),
+						tdValue		= Number(th1.children(`td:nth-child(${LastID})`).html().replace(/\s+/, "")),
+						tmpPoint	= _.size(Range) > 1 ? Values[n] : Values,
+						Count		= 0;
+					_.map(idObject, function(id, name){
+						var	tmpPoint1	= _.values(tmpPoint),
+							insertPoint	= tmpPoint1[Count] !== undefined ? tmpPoint1[Count] :
+											(tmpPoint1[Count - 1]/tdValue*100).toFixed(1);
+						th1.children(`td:nth-child(${id + 1})`).html(insertPoint);
+						++Count;
+					})
 					
-				self.childTable.children("tbody").children("tr").children("td:nth-child(1)").html(points.x);
-				self.childTable.children("tbody").children("tr").children("td:nth-child(2)").html(points.y);
-				self.childTable.children("tbody")
-					.children("tr")
-					.children("td:nth-child(4)")
-					.html((points.y/_.last(self.moneyOutput).y*100).toFixed(1));
+				});
+				
 			});
 	
 			chart.xAxis     //Chart x-axis settings
@@ -117,12 +200,13 @@ define(['jquery', 'underscore', 'handlebars', 'd3', 'nvd3'], function($, _ ,Hand
 				.tickFormat(d3.format('.0f'));
 
 
-			 d3.select("#" + id)
+			chartData =  d3.select("#" + id)
 			        .append("svg")
 					.attr("width", '100%')
 					.attr("height", '400px')
-					.datum(dataSet)
-					.call(chart);
+					.datum(dataSet);
+					
+			chartData.transition().duration(500).call(chart);		
 				
 			var what 	= /\S+\.\S+/.test(name) ? 'merchant' : 'operator';
 			var name1 = "Probability that a person pays their invoice within a certain time frame [" + what + ": " +  name + "]" ;			
@@ -140,19 +224,18 @@ define(['jquery', 'underscore', 'handlebars', 'd3', 'nvd3'], function($, _ ,Hand
 	
 		updateTable	: function(){
 				var self 		= this,
-					colName		= ['Day', 'Money In', 'Amount paid', 'Ratio paid (%)'],
-					toolTip1	= {"data-container": "body",
-									"data-toggle":"tooltip",
-									"data-original-title" :"Click on line point in the graph to view money in at the clicked time"
-					},
-					toolTip2	= {"data-container": "body",
-									"data-toggle":"tooltip",
-									"data-original-title" :"totalAmount paid to collection until requested time (see 'Day' column)"
-					},
-					toolTip3	= {"data-container": "body",
-									"data-toggle":"tooltip",
-									"data-original-title" :"Total amount paid in for the whole analyzed time frame (see date above)"
-					}
+					_type		= self.config.opts._type;
+					colName		= /^(normal)$/i.test(_type) ?
+									['Day', 'Money In', 'Amount paid', 'Ratio paid (%)'] :
+									['Score', 'Day', 'Money In', 'Amount paid', 'Ratio paid (%)'] ,
+					toolTip1	= "Click on line point in the graph to view money in at the clicked time",
+					toolTip2	= "totalAmount paid to collection until requested time (see 'Day' column)",
+					toolTip3	= "Total amount paid in for the whole analyzed time frame (see date above)",
+					toolTip4	= "Score intervall as provided by the scoring agency",
+					sourceData	= self.extractData( /^(normal)$/i.test(_type) ? null : _type ),
+					totalAmount = sourceData[2] !== undefined ? sourceData[2] : j$.sum(_.pluck(sourceData, "2")) ;
+
+					
 					
 				if ( self.childTable.children().length > 1) {
 					self.childTable.children().remove();
@@ -173,14 +256,22 @@ define(['jquery', 'underscore', 'handlebars', 'd3', 'nvd3'], function($, _ ,Hand
                             var Obj       = toolTip2 ;
                         break;
                         case (/^(amount paid)$/i.test(c)):
-                             var Obj       = toolTip3 ;
-                        break;    
+                             var Obj       = toolTip3 + " total amount " +  totalAmount + " SEK" ;
+                        break;
+						case (/^(score)$/i.test(c)):
+                             var Obj       = toolTip4 ;
+                        break;
                         default:
                             var Obj       = null ;    
                     } // end of switch
 					if (null !== Obj) {
-						row.append($("<th/>")
-							.attr(Obj  ).text(c));	
+						
+						var message = {"data-container": "body",
+													"data-toggle":"tooltip"};
+							message["data-original-title"] = 	Obj.toString();					
+						row.append($("<th/>")			
+							.attr(message)
+							.text(c));	
 					} else {
 						row.append($("<th/>").text(c));	
 					}
@@ -189,21 +280,95 @@ define(['jquery', 'underscore', 'handlebars', 'd3', 'nvd3'], function($, _ ,Hand
 				});
 				row.appendTo(tHead);
 				var tBody			= $('<tbody>').prependTo(self.childTable);
-				var Last 	= _.last(self.moneyOutput).y,
-					First	= _.first(self.moneyOutput); 
-				var row = $("<tr/>");
-				_.map([	First.x,
-						First.y,
-						Last,
-						First.y/Last !== undefined ? (First.y/Last*100).toFixed(1) : 0], function(index, c){
-					row.append($("<td/>").html(index));
-				});				
-				row.appendTo(tBody);
 				
-					
+				var row = $("<tr/>");
+				if (/^(normal)$/i.test(_type) ) {
+					_.map(sourceData, function(index, c){
+						row.append($("<td/>").html(index));
+					});				
+					row.appendTo(tBody);
+				} else {
+					self.config.scoreArray.forEach( function(d,idx){
+						var row = $("<tr/>");
+						row.append($("<td/>").html(d));
+						_.map(sourceData[d], function(index, c){
+							row.append($("<td/>").html(index));
+						});		
+						row.appendTo(tBody);			// c = scoreInteval, index array
+					});
+
+				}
+				
 			//childTable.children("tbody").children("tr").children("td:nth-child(3)").html('10019 ')	
 		},
 		
+		extractData : function( ){
+			var	self		= this,	
+				num			= arguments[0] !== undefined ?  arguments[0] : null
+				outPut		= {};
+			
+			if ( null === num ) {
+				var Last 	= _.last(self.moneyOutput).y,
+					First	= _.first(self.moneyOutput);
+				return 	[	First.x,
+							First.y,
+							Last,
+							First.y/Last !== undefined ? (First.y/Last*100).toFixed(1) : 0]
+			} else {
+				self.config.scoreArray.forEach( function(d, id){
+					var array1		= _.find(self.moneyOutput, {"key": d});
+					if (array1 === undefined) {
+						return true;
+					} 
+					var	Last		= _.last(array1.values).y,
+						First		= _.first(array1.values);
+					outPut[d] 		= [	First.x,
+										First.y,
+										Last,
+										First.y/Last !== undefined ? (First.y/Last*100).toFixed(1) : 0];
+				});
+				return outPut;
+			}	
+				
+		},
+		
+		/*self.fetchKredit(sourceData['money'], 'moneyIn', 'DaysInInkasso')
+		 *
+		 */
+		fetchKredit	: function(){
+			var	self		= this,
+				dataDT		= arguments[0] !== undefined ?  arguments[0] : null,
+				scoreVar	= _.size(_.intersection(_.keys(dataDT[0]),  ["score"])) > 0 ?  "score" : "scoreInterval" ,
+				scorce 		= dataDT !== null ? _.intersection(self.config.scoreArray,
+															_.uniq(_.pluck(dataDT, [scoreVar] ))) : null  ,
+				colors		= d3.scale.category10(),
+				output		= [],
+				rowCount	= 0,
+				yName		= arguments[1] !== undefined ?  arguments[1] : 'surv', /*kumulativ*/
+				xName		= arguments[2] !== undefined ?  arguments[2] : 'time'; /*DaysInInkasso*/
+		
+				scorce.forEach(function(d,id){
+					var dataArray		= _.where(dataDT, {[scoreVar] : d} ),
+						result			= [];
+					_.each( dataArray, function(itm) {
+						var time		= parseInt( itm[xName]) ;
+						var yvar		= /^(scoreinterval)$/i.test(scoreVar) ?
+														parseFloat(itm[yName]) :
+														parseFloat(itm[yName])*100 ;
+						if ( time <= 200) {			
+							result.push(
+									{x : itm[xName], y : yvar }
+							 )
+						}
+					});
+					var searchRest		= /^(scoreinterval)$/i.test(scoreVar) ?
+												{values : result, key : d } :
+												{values : result, key : d, color : colors(d) };
+					output.push(searchRest);
+			});
+		
+			return 	output;
+		},
 		run: function(  ){
             var self 		= this;
             var options      = (arguments[0] !== undefined) ? arguments[0] : null;
@@ -231,20 +396,27 @@ define(['jquery', 'underscore', 'handlebars', 'd3', 'nvd3'], function($, _ ,Hand
 					var 	operator = data1.siteId !== 'NULL' ? data1.siteId : data1.operatorId;
 				}
 				
-				self.moneyOutput	= self.fetchData( sourceData['money'], 'kumulativ', 'DaysInInkasso');
-				self.timeframe		=  sourceData.timeframe;
 				
-				var surv 			= self.fetchData(sourceData.data, "surv"),
-					lower 			= self.fetchData(sourceData.data, "lower"),
-					upper 			= self.fetchData(sourceData.data, "upper");
+			
+				if ( /^(kredit)$/i.test(self.config.opts._type))
+				{
+					self.moneyOutput		= self.fetchKredit(sourceData['money'], 'kumulativ', 'DaysInInkasso') ;
+					var output			 	= self.fetchKredit( sourceData.data) ;
+				} else {
+					self.moneyOutput	= self.fetchData( sourceData['money'], 'kumulativ', 'DaysInInkasso');
+					self.timeframe		=  sourceData.timeframe;
+					var surv 			= self.fetchData(sourceData.data, "surv"),
+						lower 			= self.fetchData(sourceData.data, "lower"),
+						upper 			= self.fetchData(sourceData.data, "upper");
 					
 			
 			
-				var output = [ {values : lower, key : "Lower", color: '#ff7f0e'},
-								{values : surv, key : "Payment",  color: '#2ca02c'},
-								{ values: upper, key : 'Upper', color: '#7777ff'}];
+					var output = [ {values : lower, key : "Lower", color: '#ff7f0e'},
+									{values : surv, key : "Payment",  color: '#2ca02c'},
+									{ values: upper, key : 'Upper', color: '#7777ff'}];
+				}
 				
-				self.createLineChart(output,operator );
+				self.createLineChart(output, operator );
 				self.updateTable();
 			    }).fail(function(xhr, status, error){
                     self.loading( 'empty');
@@ -254,6 +426,8 @@ define(['jquery', 'underscore', 'handlebars', 'd3', 'nvd3'], function($, _ ,Hand
 		}
 	}	 // 	Survival.prototype
 	
+	
+		
 	
 	Survival.defaults = Survival.prototype.defaults;
 	/* @argument options if empty 
